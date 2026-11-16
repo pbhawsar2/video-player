@@ -1,0 +1,19 @@
+[package]
+name = "video-player"
+version = "0.2.0"
+edition = "2024"
+description = "Ultra-low-power AMD VA-API DMA-BUF + GNOME Wayland native Video Player"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+gstreamer = { version = "0.25", features = ["v1_28"] }
+gtk4 = { version = "0.11", features = ["v4_24"] }
+libadwaita = { version = "0.9", features = ["v1_10"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

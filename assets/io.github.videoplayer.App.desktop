@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Video Player
+GenericName=Video Player
+Comment=Ultra-low-power AMD VA-API DMA-BUF hardware video player
+Exec=/home/piyush/.local/bin/video-player %U
+Icon=io.github.videoplayer.App
+Terminal=false
+Categories=AudioVideo;Video;Player;
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;video/x-flv;video/ogg;video/mp2t;video/3gpp;video/3gpp2;video/mpeg;video/mp4v-es;application/x-matroska;video/x-ms-wmv;video/divx;application/ogg;
+Keywords=video;player;movie;mkv;mp4;webm;vaapi;dmabuf;
+StartupNotify=true
+StartupWMClass=io.github.videoplayer.App

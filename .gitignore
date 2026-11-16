@@ -1,0 +1,9 @@
+# Rust build artifacts & caches
+/target/
+/.cache/
+**/*.rs.bk
+
+# Logs & temporary files
+*.log
+*.tmp
+.DS_Store
