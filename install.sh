@@ -2,33 +2,74 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN_SRC="${ROOT_DIR}/target/release/video-player"
 
-BUILD_ARG=""
-SET_DEFAULT=false
+BUILD_NATIVE=false
+FORCE_REBUILD=false
+SET_MIME=true
+
 for arg in "$@"; do
   case "${arg}" in
-    --native) BUILD_ARG="--native" ;;
-    --default) SET_DEFAULT=true ;;
+    --native) BUILD_NATIVE=true ;;
+    --rebuild) FORCE_REBUILD=true ;;
+    --no-mime) SET_MIME=false ;;
     -h|--help)
-      echo "Usage: ./install.sh [--native] [--default]"
-      echo "  --native   Build using host cargo instead of the rootless Fedora 45 container"
-      echo "  --default  Register Video Player as default GNOME handler for common video MIME types"
+      echo "Usage: ./install.sh [OPTIONS]"
+      echo ""
+      echo "Industrial-grade standalone installer for Video Player (GTK 4 / Libadwaita / Wayland)."
+      echo "Defaults to complete, turnkey installation without requiring any arguments."
+      echo ""
+      echo "Options:"
+      echo "  --native    Build with host cargo instead of containerized Fedora toolchain"
+      echo "  --rebuild   Force re-compilation even if release binary already exists"
+      echo "  --no-mime   Skip registering Video Player as default handler for video formats"
+      echo "  -h, --help  Show this help message and exit"
       exit 0
       ;;
     *)
       echo "Unknown option: ${arg}" >&2
+      echo "Run './install.sh --help' for usage." >&2
       exit 1
       ;;
   esac
 done
 
-"${ROOT_DIR}/build.sh" ${BUILD_ARG}
+# Step 1: Ensure optimized release binary is built
+if [[ ! -x "${BIN_SRC}" ]] || [[ "${FORCE_REBUILD}" == "true" ]]; then
+  echo "[video-player] Building optimized release binary..."
+  if [[ "${BUILD_NATIVE}" == "true" ]]; then
+    "${ROOT_DIR}/build.sh" --native
+  else
+    "${ROOT_DIR}/build.sh"
+  fi
+fi
+
+# Step 2: Install standalone binary, icon, and validated desktop integration
 "${ROOT_DIR}/install-desktop.sh"
 
-if [[ "${SET_DEFAULT}" == "true" ]] && command -v xdg-mime >/dev/null 2>&1; then
-  echo "[video-player] Setting Video Player as default handler for common video formats..."
-  for mime in video/mp4 video/x-matroska video/webm video/quicktime video/x-msvideo video/mpeg; do
-    xdg-mime default io.github.videoplayer.App.desktop "${mime}" || true
+# Step 3: Register as default handler for supported video MIME types by default
+if [[ "${SET_MIME}" == "true" ]] && command -v xdg-mime >/dev/null 2>&1; then
+  echo "[video-player] Registering Video Player as default handler for video formats..."
+  MIME_TYPES=(
+    video/mp4
+    video/x-matroska
+    video/webm
+    video/quicktime
+    video/x-msvideo
+    video/x-flv
+    video/ogg
+    video/mp2t
+    video/3gpp
+    video/3gpp2
+    video/mpeg
+    video/mp4v-es
+    application/x-matroska
+    video/x-ms-wmv
+    video/divx
+    application/ogg
+  )
+  for mime in "${MIME_TYPES[@]}"; do
+    xdg-mime default io.github.videoplayer.App.desktop "${mime}" 2>/dev/null || true
   done
 fi
 

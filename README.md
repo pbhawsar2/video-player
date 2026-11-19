@@ -21,35 +21,52 @@ Ultra-low-power, bezel-less native Linux Video Player built in **Rust** with **G
 
 ## Installation
 
-### Option 1: One-Command Containerized Build & User Install (Recommended, Zero Host Changes)
-Uses rootless `podman` and [`Containerfile`](Containerfile) so no `-devel` packages need to be installed on your host system:
+### Turnkey Installation (Recommended)
+
+Running `./install.sh` without arguments automatically performs a complete, turnkey installation:
 
 ```bash
 chmod +x build.sh install-desktop.sh install.sh uninstall.sh
 ./install.sh
 ```
 
-To also set **Video Player** as your default handler for `.mp4`, `.mkv`, `.webm`, `.mov`, `.avi`, and `.mpeg` in GNOME Files:
+This single command:
+- Checks for an existing optimized release binary (builds it automatically via rootless container if missing)
+- Installs the standalone binary (`~/.local/bin/video-player`) and scalable SVG icon (no fragile symlinks)
+- Configures and validates desktop launcher integration with dynamic `Exec` path resolution
+- Refreshes the system desktop database and GTK icon cache
+- Automatically registers **Video Player** as default handler for common video formats (`.mp4`, `.mkv`, `.webm`, `.mov`, `.avi`, `.flv`, `.ogg`, `.ts`, `.3gp`, `.mpeg`, `.wmv`)
+
+### Optional Build & Install Flags
+
+- `--native`: Compile natively using host `cargo` instead of the rootless Fedora container
+- `--rebuild`: Force recompilation even if `target/release/video-player` already exists
+- `--no-mime`: Skip registering Video Player as the default video handler
+
+### Custom Prefix / System-Wide Install
+
+To install system-wide (e.g. `/usr/local`):
 
 ```bash
-./install.sh --default
+PREFIX=/usr/local ./install.sh
 ```
 
-### Option 2: Native Host Build (If `gtk4-devel`, `libadwaita-devel`, `gstreamer1-devel`, and `cargo` are installed)
+### Desktop Integration Only
+
+If `target/release/video-player` is already compiled and you only wish to re-install or refresh the standalone binary and desktop entry:
 
 ```bash
-./install.sh --native
-```
-
-### Step-by-Step Manual Install
-```bash
-./build.sh              # Builds target/release/video-player inside Fedora 45 container
-./install-desktop.sh    # Symlinks ~/.local/bin/video-player and installs icon + .desktop launcher
+./install-desktop.sh
 ```
 
 ### Uninstall
+
 ```bash
+# Uninstall application launcher, binary, and icon
 ./uninstall.sh
+
+# Or uninstall and completely purge all caches, config, and application data
+./uninstall.sh --purge
 ```
 
 ---
