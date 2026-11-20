@@ -6,6 +6,10 @@ BIN_DST="${PREFIX}/bin/video-player"
 ICON_DST="${PREFIX}/share/icons/hicolor/scalable/apps/io.github.videoplayer.App.svg"
 APP_DST="${PREFIX}/share/applications/io.github.videoplayer.App.desktop"
 
+XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
+
 PURGE_DATA=false
 for arg in "$@"; do
   case "${arg}" in
@@ -14,7 +18,7 @@ for arg in "$@"; do
       ;;
     -h|--help)
       echo "Usage: ./uninstall.sh [--purge]"
-      echo "Uninstalls binary, icon, and desktop entry."
+      echo "Uninstalls binary, icon, desktop entry, and restores MIME handlers."
       echo "  --purge, --all-data  Also delete user configuration, GStreamer cache, and application data"
       exit 0
       ;;
@@ -28,10 +32,22 @@ done
 # Remove binaries and desktop integration
 rm -f "${BIN_DST}" "${ICON_DST}" "${APP_DST}"
 
+# Clean MIME associations from user's mimeapps.list (preserving any other handlers on the same line)
+for mime_file in "${XDG_CONFIG_HOME}/mimeapps.list" "${XDG_DATA_HOME}/applications/mimeapps.list"; do
+  if [[ -f "${mime_file}" ]]; then
+    sed -i -E \
+      -e 's/io\.github\.videoplayer\.App\.desktop;//g' \
+      -e 's/;io\.github\.videoplayer\.App\.desktop//g' \
+      -e 's/=io\.github\.videoplayer\.App\.desktop$/=/g' \
+      -e '/^[^=[]+=\s*$/d' \
+      "${mime_file}" 2>/dev/null || true
+  fi
+done
+
 # Clean up application data, config, and cache if requested
 if [[ "${PURGE_DATA}" == "true" ]]; then
-  rm -rf "${HOME}/.cache/video-player"
-  rm -rf "${HOME}/.config/video-player"
+  rm -rf "${XDG_CACHE_HOME}/video-player"
+  rm -rf "${XDG_CONFIG_HOME}/video-player"
   rm -rf "${PREFIX}/share/video-player"
   echo "[video-player] Removed user cache, config, and application data."
 fi

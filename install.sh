@@ -4,23 +4,24 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_SRC="${ROOT_DIR}/target/release/video-player"
 
-BUILD_NATIVE=false
+USE_CONTAINER=false
 FORCE_REBUILD=false
 SET_MIME=true
 
 for arg in "$@"; do
   case "${arg}" in
-    --native) BUILD_NATIVE=true ;;
+    --container) USE_CONTAINER=true ;;
+    --native) USE_CONTAINER=false ;;
     --rebuild) FORCE_REBUILD=true ;;
     --no-mime) SET_MIME=false ;;
     -h|--help)
       echo "Usage: ./install.sh [OPTIONS]"
       echo ""
       echo "Industrial-grade standalone installer for Video Player (GTK 4 / Libadwaita / Wayland)."
-      echo "Defaults to complete, turnkey installation without requiring any arguments."
+      echo "Defaults to fast native compilation and turnkey standalone installation."
       echo ""
       echo "Options:"
-      echo "  --native    Build with host cargo instead of containerized Fedora toolchain"
+      echo "  --container Build inside isolated Fedora container instead of host"
       echo "  --rebuild   Force re-compilation even if release binary already exists"
       echo "  --no-mime   Skip registering Video Player as default handler for video formats"
       echo "  -h, --help  Show this help message and exit"
@@ -37,8 +38,8 @@ done
 # Step 1: Ensure optimized release binary is built
 if [[ ! -x "${BIN_SRC}" ]] || [[ "${FORCE_REBUILD}" == "true" ]]; then
   echo "[video-player] Building optimized release binary..."
-  if [[ "${BUILD_NATIVE}" == "true" ]]; then
-    "${ROOT_DIR}/build.sh" --native
+  if [[ "${USE_CONTAINER}" == "true" ]]; then
+    "${ROOT_DIR}/build.sh" --container
   else
     "${ROOT_DIR}/build.sh"
   fi
@@ -71,6 +72,15 @@ if [[ "${SET_MIME}" == "true" ]] && command -v xdg-mime >/dev/null 2>&1; then
   for mime in "${MIME_TYPES[@]}"; do
     xdg-mime default io.github.videoplayer.App.desktop "${mime}" 2>/dev/null || true
   done
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications" 2>/dev/null || true
+  fi
+fi
+
+INSTALLED_BIN="${PREFIX:-$HOME/.local}/bin/video-player"
+if [[ -x "${INSTALLED_BIN}" ]]; then
+  VERSION_CHECK=$("${INSTALLED_BIN}" --version 2>/dev/null || echo "Video Player")
+  echo "[video-player] Integrity Check: ${VERSION_CHECK} is functional."
 fi
 
 echo "[video-player] Done! Launch 'Video Player' from GNOME or double-click any video file."

@@ -79,14 +79,17 @@ pub fn detect_display_topology() -> DisplayTopology {
     }
 }
 
-fn app_gst_registry_path() -> PathBuf {
+fn app_gst_registry_path(route: GpuRoute) -> PathBuf {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("video-player");
     let _ = fs::create_dir_all(&dir);
-    dir.join("gstreamer-registry.bin")
+    match route {
+        GpuRoute::AmdIgpuOnly => dir.join("gstreamer-registry-igpu.bin"),
+        GpuRoute::AllowNvidiaDgpu => dir.join("gstreamer-registry-dual.bin"),
+    }
 }
 
 /// Apply strictly process-scoped GPU isolation BEFORE GTK4 / Vulkan / EGL / GStreamer initialize.
@@ -97,8 +100,8 @@ pub fn apply_process_gpu_isolation(force_nvidia: bool) -> DisplayTopology {
         topo.route = GpuRoute::AllowNvidiaDgpu;
     }
 
-    // Isolate this app's GStreamer registry cache from the rest of the Fedora user session.
-    let reg_path = app_gst_registry_path();
+    // Isolate this app's GStreamer registry cache per GPU route from the rest of the user session.
+    let reg_path = app_gst_registry_path(topo.route);
 
     // SAFETY: Called on main thread before spawning GTK/GStreamer worker threads.
     unsafe {
@@ -207,7 +210,9 @@ mod tests {
 
     #[test]
     fn registry_cache_stays_user_scoped() {
-        let p = app_gst_registry_path();
-        assert!(p.ends_with("video-player/gstreamer-registry.bin"));
+        let p_igpu = app_gst_registry_path(GpuRoute::AmdIgpuOnly);
+        let p_dual = app_gst_registry_path(GpuRoute::AllowNvidiaDgpu);
+        assert!(p_igpu.ends_with("video-player/gstreamer-registry-igpu.bin"));
+        assert!(p_dual.ends_with("video-player/gstreamer-registry-dual.bin"));
     }
 }

@@ -34,6 +34,8 @@ enum PipelineCmd {
 struct WorkerShared {
     video_sink: gst::Element,
     events: Arc<Mutex<Vec<PlayerEvent>>>,
+    on_event: Arc<Mutex<Option<Box<dyn Fn() + Send + Sync>>>>,
+    event_wake_pending: Arc<AtomicBool>,
     want_playing: Arc<AtomicBool>,
     is_buffering: Arc<AtomicBool>,
     ui_visible: Arc<AtomicBool>,
@@ -83,6 +85,8 @@ impl PlayerEngine {
         let shared = Arc::new(WorkerShared {
             video_sink,
             events: Arc::new(Mutex::new(Vec::new())),
+            on_event: Arc::new(Mutex::new(None)),
+            event_wake_pending: Arc::new(AtomicBool::new(false)),
             want_playing: Arc::new(AtomicBool::new(false)),
             is_buffering: Arc::new(AtomicBool::new(false)),
             ui_visible: Arc::new(AtomicBool::new(true)),
@@ -143,7 +147,19 @@ impl PlayerEngine {
         self.shared.open_ready_ms.load(Ordering::Acquire)
     }
 
+    pub fn set_event_callback<F>(&self, cb: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        if let Ok(mut slot) = self.shared.on_event.lock() {
+            *slot = Some(Box::new(cb));
+        }
+    }
+
     pub fn drain_events(&self) -> Vec<PlayerEvent> {
+        self.shared
+            .event_wake_pending
+            .store(false, Ordering::Release);
         if let Ok(mut q) = self.shared.events.lock() {
             std::mem::take(&mut *q)
         } else {
@@ -328,9 +344,7 @@ fn run_pipeline_actor(
                 }
                 Err(err) => {
                     pending_rate_apply = false;
-                    if let Ok(mut q) = shared.events.lock() {
-                        q.push(PlayerEvent::Error(err));
-                    }
+                    push_event(&shared, PlayerEvent::Error(err));
                 }
             }
         }
@@ -353,9 +367,7 @@ fn run_pipeline_actor(
                 };
                 let _ = pipe.set_state(target);
             }
-            if let Ok(mut q) = shared.events.lock() {
-                q.push(PlayerEvent::Buffering(pct));
-            }
+            push_event(&shared, PlayerEvent::Buffering(pct));
         }
 
         if let Some(play) = latest_play {
@@ -437,9 +449,7 @@ fn run_pipeline_actor(
                 let (w, h) = update_caps_summary(&shared);
                 if w > 0 && h > 0 && !dims_emitted {
                     dims_emitted = true;
-                    if let Ok(mut q) = shared.events.lock() {
-                        q.push(PlayerEvent::VideoDimensions(w, h));
-                    }
+                    push_event(&shared, PlayerEvent::VideoDimensions(w, h));
                 }
                 if !vdec.is_empty() && w > 0 && shared.dur_ns.load(Ordering::Acquire) > 0 {
                     meta_resolved = true;
@@ -490,12 +500,27 @@ fn apply_rate_seek(
     }
 }
 
+fn push_event(shared: &WorkerShared, ev: PlayerEvent) {
+    if let Ok(mut q) = shared.events.lock() {
+        q.push(ev);
+    }
+    if !shared.event_wake_pending.swap(true, Ordering::AcqRel) {
+        if let Ok(cb) = shared.on_event.lock() {
+            if let Some(ref f) = *cb {
+                f();
+            }
+        }
+    }
+}
+
 fn teardown_pipeline(active_pipe: &mut Option<gst::Pipeline>, shared: &WorkerShared) {
     if let Some(pipe) = active_pipe.take() {
         if let Some(bus) = pipe.bus() {
             bus.unset_sync_handler();
         }
         let _ = pipe.set_state(gst::State::Null);
+        let _ = pipe.remove(&shared.video_sink);
+        let _ = shared.video_sink.set_state(gst::State::Null);
     }
     if let Ok(mut v) = shared.active_vol.lock() {
         *v = None;
@@ -599,23 +624,18 @@ fn build_and_start_pipeline(
     });
 
     if let Some(bus) = pipe.bus() {
-        let events = Arc::clone(&shared.events);
+        let shared_bus = Arc::clone(shared);
         let cmd_tx = cmd_tx.clone();
         bus.set_sync_handler(move |_bus, msg| {
             match msg.view() {
                 gst::MessageView::Error(err) => {
-                    if let Ok(mut q) = events.lock() {
-                        q.push(PlayerEvent::Error(format!(
-                            "{} ({:?})",
-                            err.error(),
-                            err.debug()
-                        )));
-                    }
+                    push_event(
+                        &shared_bus,
+                        PlayerEvent::Error(format!("{} ({:?})", err.error(), err.debug())),
+                    );
                 }
                 gst::MessageView::Eos(_) => {
-                    if let Ok(mut q) = events.lock() {
-                        q.push(PlayerEvent::Eos);
-                    }
+                    push_event(&shared_bus, PlayerEvent::Eos);
                 }
                 gst::MessageView::Buffering(buf) => {
                     let _ = cmd_tx.send(PipelineCmd::Buffering(buf.percent()));

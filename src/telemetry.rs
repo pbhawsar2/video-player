@@ -100,19 +100,46 @@ impl CpuSampler {
 fn read_self_cpu_ticks() -> Option<u64> {
     let raw = fs::read_to_string("/proc/self/stat").ok()?;
     let rparen = raw.rfind(')')?;
-    let rest: Vec<&str> = raw[rparen + 2..].split_whitespace().collect();
-    let utime: u64 = rest.get(11)?.parse().ok()?;
-    let stime: u64 = rest.get(12)?.parse().ok()?;
+    let mut fields = raw[rparen + 2..].split_whitespace();
+    let utime: u64 = fields.nth(11)?.parse().ok()?;
+    let stime: u64 = fields.next()?.parse().ok()?;
     Some(utime + stime)
 }
 
+fn find_pci_gpu_runtime_status(vendor_hex: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir("/sys/bus/pci/devices").ok()?;
+    for entry in entries.flatten() {
+        let base = entry.path();
+        let vendor = read_trimmed(&base.join("vendor").to_string_lossy())?;
+        if !vendor.eq_ignore_ascii_case(vendor_hex) {
+            continue;
+        }
+        // Match Display Controller PCI class (0x03xxxx: VGA / 3D / Display)
+        if let Some(cls) = read_trimmed(&base.join("class").to_string_lossy()) {
+            if cls.starts_with("0x03") {
+                let st = base.join("power/runtime_status");
+                if st.exists() {
+                    return Some(st);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn read_nvidia_rtd3_status() -> String {
-    read_trimmed("/sys/bus/pci/devices/0000:01:00.0/power/runtime_status")
+    static NV_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let path = NV_PATH.get_or_init(|| find_pci_gpu_runtime_status("0x10de"));
+    path.as_deref()
+        .and_then(|p| read_trimmed(&p.to_string_lossy()))
         .unwrap_or_else(|| "unknown".into())
 }
 
 pub fn read_amd_status() -> String {
-    read_trimmed("/sys/bus/pci/devices/0000:07:00.0/power/runtime_status")
+    static AMD_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let path = AMD_PATH.get_or_init(|| find_pci_gpu_runtime_status("0x1002"));
+    path.as_deref()
+        .and_then(|p| read_trimmed(&p.to_string_lossy()))
         .unwrap_or_else(|| "unknown".into())
 }
 
@@ -167,14 +194,38 @@ pub fn read_fan_rpm() -> u32 {
         .unwrap_or(0)
 }
 
+fn battery_dir() -> Option<&'static PathBuf> {
+    static BAT_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    BAT_DIR
+        .get_or_init(|| {
+            let bat0 = PathBuf::from("/sys/class/power_supply/BAT0");
+            if bat0.join("status").exists() {
+                return Some(bat0);
+            }
+            fs::read_dir("/sys/class/power_supply")
+                .ok()?
+                .flatten()
+                .map(|e| e.path())
+                .find(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("BAT"))
+                        && p.join("status").exists()
+                })
+        })
+        .as_ref()
+}
+
 /// Returns `(effective_watts, status_label)`.
-/// When discharging on battery, uses `BAT0/power_now`; when on AC (`Charging`/`Full`),
+/// When discharging on battery, uses `BAT*/power_now`; when on AC (`Charging`/`Full`),
 /// reports `amdgpu` APU package power instead of battery charging current.
 pub fn read_battery_info() -> (Option<f64>, String) {
-    let status = read_trimmed("/sys/class/power_supply/BAT0/status")
-        .unwrap_or_else(|| "AC".into());
+    let Some(bat) = battery_dir() else {
+        return (read_apu_watts(), "AC".into());
+    };
+    let status = read_trimmed(&bat.join("status").to_string_lossy()).unwrap_or_else(|| "AC".into());
     if status.eq_ignore_ascii_case("Discharging") {
-        let bat_w = read_trimmed("/sys/class/power_supply/BAT0/power_now")
+        let bat_w = read_trimmed(&bat.join("power_now").to_string_lossy())
             .and_then(|v| v.parse::<f64>().ok())
             .map(|uw| uw / 1_000_000.0)
             .filter(|&w| w > 0.5)

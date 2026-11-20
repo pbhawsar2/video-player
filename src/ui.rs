@@ -540,6 +540,17 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
         })
     };
 
+    // Event-driven wakeup channel & 0 Hz idle OSD/HUD timer handle
+    let ensure_ui_timer_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let wake_ui_timer = {
+        let slot = Rc::clone(&ensure_ui_timer_slot);
+        Rc::new(move || {
+            if let Some(ref f) = *slot.borrow() {
+                f();
+            }
+        })
+    };
+
     // Show ONLY the bottom playback bar during video playback (keeps top bezel/window
     // buttons completely off the playing video unless pointer enters top strip).
     let show_playback_bar: Rc<dyn Fn()> = {
@@ -549,6 +560,7 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
         let explicit_hidden = Rc::clone(&explicit_hidden);
         let hidden_at = Rc::clone(&hidden_at);
         let eng = Rc::clone(&engine);
+        let wake = Rc::clone(&wake_ui_timer);
         Rc::new(move || {
             act.set(0);
             explicit_hidden.set(false);
@@ -557,6 +569,7 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
             bot_rev.set_visible(true);
             bot_rev.set_reveal_child(true);
             eng.set_ui_visible(true);
+            wake();
         })
     };
 
@@ -569,6 +582,7 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
         let explicit_hidden = Rc::clone(&explicit_hidden);
         let hidden_at = Rc::clone(&hidden_at);
         let eng = Rc::clone(&engine);
+        let wake = Rc::clone(&wake_ui_timer);
         Rc::new(move || {
             act.set(0);
             explicit_hidden.set(false);
@@ -579,6 +593,7 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
             bot_rev.set_visible(true);
             bot_rev.set_reveal_child(true);
             eng.set_ui_visible(true);
+            wake();
         })
     };
 
@@ -818,12 +833,14 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
         let hud = hud_label.clone();
         let eng = Rc::clone(&engine);
         let cpu = Rc::clone(&cpu_sampler);
+        let wake = Rc::clone(&wake_ui_timer);
         Rc::new(move || {
             let next = !hud.is_visible();
             hud.set_visible(next);
             if next {
                 let t = collect_telemetry(&eng, &mut cpu.borrow_mut());
                 hud.set_text(&format_hud(&t));
+                wake();
             }
         })
     };
@@ -1304,31 +1321,16 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
     window.add_controller(key_ctrl.clone());
 
     // =========================================================================
-    // Low-Wakeup Periodic UI / Direct-Scanout Idle Timer (250ms)
+    // Event-Driven Pipeline Drain (0 ms latency) + 0 Hz Idle OSD/HUD Timer
     // =========================================================================
-    {
+    let drain_pipeline_events: Rc<dyn Fn()> = {
         let eng = Rc::clone(&engine);
         let win = window.clone();
-        let seek_scale = seek_scale.clone();
-        let seeking_until = Rc::clone(&seeking_until);
-        let time_label = time_label.clone();
-        let hud_label = hud_label.clone();
         let status_banner = status_banner.clone();
         let play_btn = play_btn.clone();
-        let bot_rev = bot_rev.clone();
-        let header_rev = header_rev.clone();
-        let hide_all = Rc::clone(&hide_all_controls);
-        let act = Rc::clone(&last_activity_tick);
-        let hdiv = Rc::clone(&header_tick_div);
-        let cpu_sampler = Rc::clone(&cpu_sampler);
-        let stats_btn = stats_btn.clone();
-        let has_media = Rc::clone(&has_media);
         let is_eos = Rc::clone(&is_eos);
         let inhibit = Rc::clone(&update_inhibit);
-        let speed_popover = speed_popover.clone();
-        let route = opts.topology.route;
-
-        glib::timeout_add_local(Duration::from_millis(250), move || {
+        Rc::new(move || {
             for ev in eng.drain_events() {
                 match ev {
                     PlayerEvent::Error(e) => {
@@ -1368,65 +1370,146 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
                     }
                 }
             }
+        })
+    };
 
-            // Auto-hide controls after 2.0s idle while playing (keep open if speed popover open)
-            if has_media.get() && eng.is_playing() && !speed_popover.is_visible() {
-                let t = act.get().saturating_add(1);
-                act.set(t);
-                if t >= 8 && (bot_rev.reveals_child() || header_rev.reveals_child()) {
-                    hide_all(false);
+    // Wake GTK main loop immediately on GStreamer actor/bus events (0 Hz when idle)
+    {
+        let main_ctx = glib::MainContext::default();
+        let drain_weak = Rc::downgrade(&drain_pipeline_events);
+        // Send-safe wakeup via MainContext::invoke on the GTK main thread
+        let drain_ptr = Box::into_raw(Box::new(drain_weak)) as usize;
+        // Keep a strong ref alive in the window lifecycle via closure below
+        engine.set_event_callback(move || {
+            main_ctx.invoke(move || {
+                // SAFETY: Always executes on GTK main thread; `drain_weak` only upgrades while window lives.
+                let weak = unsafe { &*(drain_ptr as *const std::rc::Weak<dyn Fn()>) };
+                if let Some(f) = weak.upgrade() {
+                    f();
                 }
-            }
-
-            // ZERO GTK widget updates when bottom OSD is hidden -> Mutter Direct Scanout!
-            let is_seeking = seeking_until
-                .get()
-                .is_some_and(|until| Instant::now() < until);
-            if has_media.get() && bot_rev.is_visible() && bot_rev.reveals_child() && !is_seeking {
-                let (pos, dur) = eng.position_and_duration_secs();
-                if dur > 0.1 {
-                    seek_scale.set_range(0.0, dur);
-                    seek_scale.set_value(pos);
-                }
-                time_label.set_text(&format!("{} / {}", fmt_time(pos), fmt_time(dur)));
-            }
-
-            let div = hdiv.get().wrapping_add(1);
-            hdiv.set(div);
-            let need_hud = hud_label.is_visible();
-            let need_chip = header_rev.is_visible() && header_rev.reveals_child() && (div % 10 == 0);
-            if need_hud || need_chip {
-                let t = collect_telemetry(&eng, &mut cpu_sampler.borrow_mut());
-                if need_hud {
-                    hud_label.set_text(&format_hud(&t));
-                }
-                if need_chip {
-                    let w_str = t
-                        .battery_watts
-                        .map(|w| format!("{w:.1}W"))
-                        .unwrap_or_else(|| "AC".into());
-                    let dec = if t.decoder_name == "idle" {
-                        if route == GpuRoute::AmdIgpuOnly {
-                            "VCN".into()
-                        } else {
-                            "NVDEC".into()
-                        }
-                    } else {
-                        short_codec_label(&t.decoder_name).to_string()
-                    };
-                    stats_btn.set_label(&format!("{dec} · {w_str}"));
-                    stats_btn.remove_css_class("emerald-chip");
-                    stats_btn.remove_css_class("amber-chip");
-                    stats_btn.add_css_class(if t.nvidia_rtd3 == "suspended" {
-                        "emerald-chip"
-                    } else {
-                        "amber-chip"
-                    });
-                }
-            }
-
-            glib::ControlFlow::Continue
+            });
         });
+    }
+
+    // On-demand 250ms OSD/HUD timer: runs ONLY while overlays or HUD are visible,
+    // returning ControlFlow::Break (true 0 Hz idle) as soon as OSD hides for Direct Scanout!
+    let ui_timer_running = Rc::new(Cell::new(false));
+    let ensure_ui_timer: Rc<dyn Fn()> = {
+        let running = Rc::clone(&ui_timer_running);
+        let drain_ev = Rc::clone(&drain_pipeline_events);
+        let eng = Rc::clone(&engine);
+        let seek_scale = seek_scale.clone();
+        let seeking_until = Rc::clone(&seeking_until);
+        let time_label = time_label.clone();
+        let hud_label = hud_label.clone();
+        let bot_rev = bot_rev.clone();
+        let header_rev = header_rev.clone();
+        let hide_all = Rc::clone(&hide_all_controls);
+        let act = Rc::clone(&last_activity_tick);
+        let hdiv = Rc::clone(&header_tick_div);
+        let cpu_sampler = Rc::clone(&cpu_sampler);
+        let stats_btn = stats_btn.clone();
+        let has_media = Rc::clone(&has_media);
+        let speed_popover = speed_popover.clone();
+        let route = opts.topology.route;
+
+        Rc::new(move || {
+            if running.replace(true) {
+                return;
+            }
+            let running = Rc::clone(&running);
+            let drain_ev = Rc::clone(&drain_ev);
+            let eng = Rc::clone(&eng);
+            let seek_scale = seek_scale.clone();
+            let seeking_until = Rc::clone(&seeking_until);
+            let time_label = time_label.clone();
+            let hud_label = hud_label.clone();
+            let bot_rev = bot_rev.clone();
+            let header_rev = header_rev.clone();
+            let hide_all = Rc::clone(&hide_all);
+            let act = Rc::clone(&act);
+            let hdiv = Rc::clone(&hdiv);
+            let cpu_sampler = Rc::clone(&cpu_sampler);
+            let stats_btn = stats_btn.clone();
+            let has_media = Rc::clone(&has_media);
+            let speed_popover = speed_popover.clone();
+
+            glib::timeout_add_local(Duration::from_millis(250), move || {
+                drain_ev();
+
+                let osd_active = has_media.get()
+                    && (bot_rev.reveals_child() || header_rev.reveals_child());
+                let need_hud = hud_label.is_visible();
+
+                // Auto-hide controls after 2.0s idle while playing (keep open if speed popover open)
+                if has_media.get() && eng.is_playing() && !speed_popover.is_visible() {
+                    let t = act.get().saturating_add(1);
+                    act.set(t);
+                    if t >= 8 && (bot_rev.reveals_child() || header_rev.reveals_child()) {
+                        hide_all(false);
+                    }
+                }
+
+                // ZERO GTK widget updates when bottom OSD is hidden -> Mutter Direct Scanout!
+                let is_seeking = seeking_until
+                    .get()
+                    .is_some_and(|until| Instant::now() < until);
+                if has_media.get() && bot_rev.is_visible() && bot_rev.reveals_child() && !is_seeking {
+                    let (pos, dur) = eng.position_and_duration_secs();
+                    if dur > 0.1 {
+                        seek_scale.set_range(0.0, dur);
+                        seek_scale.set_value(pos);
+                    }
+                    time_label.set_text(&format!("{} / {}", fmt_time(pos), fmt_time(dur)));
+                }
+
+                let div = hdiv.get().wrapping_add(1);
+                hdiv.set(div);
+                let need_chip =
+                    header_rev.is_visible() && header_rev.reveals_child() && (div % 10 == 0);
+                if need_hud || need_chip {
+                    let t = collect_telemetry(&eng, &mut cpu_sampler.borrow_mut());
+                    if need_hud {
+                        hud_label.set_text(&format_hud(&t));
+                    }
+                    if need_chip {
+                        let w_str = t
+                            .battery_watts
+                            .map(|w| format!("{w:.1}W"))
+                            .unwrap_or_else(|| "AC".into());
+                        let dec = if t.decoder_name == "idle" {
+                            if route == GpuRoute::AmdIgpuOnly {
+                                "VCN".into()
+                            } else {
+                                "NVDEC".into()
+                            }
+                        } else {
+                            short_codec_label(&t.decoder_name).to_string()
+                        };
+                        stats_btn.set_label(&format!("{dec} · {w_str}"));
+                        stats_btn.remove_css_class("emerald-chip");
+                        stats_btn.remove_css_class("amber-chip");
+                        stats_btn.add_css_class(if t.nvidia_rtd3 == "suspended" {
+                            "emerald-chip"
+                        } else {
+                            "amber-chip"
+                        });
+                    }
+                }
+
+                // True 0 Hz idle: stop timer completely when no OSD or HUD is active!
+                if !osd_active && !need_hud {
+                    running.set(false);
+                    return glib::ControlFlow::Break;
+                }
+
+                glib::ControlFlow::Continue
+            });
+        })
+    };
+    *ensure_ui_timer_slot.borrow_mut() = Some(Rc::clone(&ensure_ui_timer));
+    if opts.show_hud {
+        ensure_ui_timer();
     }
 
     // Save state cleanly on window close (skip overwriting user speed/recent during test_stress)
