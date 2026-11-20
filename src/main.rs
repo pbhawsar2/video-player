@@ -1,17 +1,19 @@
-mod config;
-mod hw_policy;
-mod pipeline;
-mod telemetry;
-mod theme;
-mod ui;
-mod win_controls;
+//! Video Player — Native Hardware-Centric Ultra-Low-Power Video Player
+//!
+//! ### Modular 3-Layer Architecture
+//! - [`video_player::core`]: Pure, hardware-agnostic & toolkit-agnostic playback helpers.
+//! - [`video_player::hw`]: Isolated GPU/DRM/VA-API/RTD3 policy & sysfs/procfs telemetry.
+//! - [`video_player::ui`]: GTK 4.24 + Libadwaita + `GraphicsOffload` Wayland UI.
 
 use clap::Parser;
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use hw_policy::{GpuRoute, apply_gst_codec_ranks, apply_process_gpu_isolation};
-use telemetry::read_battery_info;
-use ui::{LaunchOptions, run_gui};
+use video_player::config;
+use video_player::hw::policy::{
+    self as hw_policy, GpuRoute, apply_gst_codec_ranks, apply_process_gpu_isolation,
+};
+use video_player::hw::telemetry::{self, read_battery_info};
+use video_player::ui::{LaunchOptions, run_gui};
 
 #[derive(Parser, Debug)]
 #[command(

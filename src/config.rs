@@ -1,9 +1,8 @@
+pub use crate::core::playback::{DEFAULT_UI_SCALE, SPEED_PRESETS, clamp_scale, snap_speed};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-pub const DEFAULT_UI_SCALE: f64 = 1.20;
-pub const SPEED_PRESETS: [f64; 4] = [1.0, 1.25, 1.5, 2.0];
 const MAX_RECENT_FILES: usize = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,24 +34,6 @@ impl Default for AppConfig {
             recent_files: Vec::new(),
         }
     }
-}
-
-pub fn clamp_scale(s: f64) -> f64 {
-    if !s.is_finite() {
-        return DEFAULT_UI_SCALE;
-    }
-    s.clamp(0.85, 2.00)
-}
-
-pub fn snap_speed(rate: f64) -> f64 {
-    if !rate.is_finite() {
-        return 1.0;
-    }
-    SPEED_PRESETS
-        .iter()
-        .copied()
-        .min_by(|a, b| (a - rate).abs().total_cmp(&(b - rate).abs()))
-        .unwrap_or(1.0)
 }
 
 pub fn config_dir() -> PathBuf {

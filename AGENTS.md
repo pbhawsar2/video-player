@@ -25,23 +25,36 @@ This document defines mandatory operating rules for all AI agents (Antigravity, 
 
 ## 2. Stability First: 100% Rigorous Verification
 
-The primary objective is maintaining rock-solid app stability, high performance, and hardware decode reliability on Wayland / Linux (AMD VA-API DMA-BUF, GStreamer, and NVIDIA RTD3 isolation).
+The primary objective is maintaining rock-solid app stability, ultra-low power consumption, and hardware decode reliability on Wayland / Linux (AMD VA-API DMA-BUF, GStreamer, and NVIDIA RTD3 isolation).
 
 Before presenting any changes for commit approval:
 1. **Build Integrity**:
-   - Ensure the project builds cleanly without warnings or errors (`cargo check` or `./build.sh --native` / container build).
+   - Ensure the project builds cleanly without warnings or errors (`cargo check --all-targets`, `cargo test --release`, and `./build.sh`).
 2. **Desktop & Shell Integration**:
-   - If desktop entries, scripts, or assets are touched, validate them (`desktop-file-validate`).
-   - Ensure install scripts remain turnkey and industrial-grade (standalone binaries via `install -p -m 755`, **zero fragile symlinks**).
+   - If desktop entries, scripts, or assets are touched, validate them (`desktop-file-validate`, `bash -n`).
+   - Ensure install scripts remain native-default, turnkey, and industrial-grade (standalone binaries via `install -p -m 755`, **zero fragile symlinks**, zero container requirement by default).
 3. **Hardware & Subsystem Verification**:
-   - Verify hardware decode and pipeline stability (`./target/release/video-player --test-stress`).
-   - Verify telemetry and GPU isolation logic (`./target/release/video-player --hud`).
+   - Verify hardware isolation probe (`./target/release/video-player --probe`).
+   - Verify hardware decode, DMA-BUF zero-copy, and UI stability (`./target/release/video-player --test-stress`).
 4. **Clean Tree**:
-   - Ensure no temporary files (`*.swp`, `*.tmp_rot`, ad-hoc build artifacts) pollute the working tree.
+   - Ensure no temporary files (`*.swp`, `.cache`, ad-hoc build artifacts) pollute the working tree.
 
 ---
 
-## 3. Communication Standards
+## 3. Architecture & Maximum Performance Protocol
+
+1. **SOLID 3-Layer Segregation (Brother Architecture to Photos)**:
+   - `src/core/`: Pure, hardware-agnostic & toolkit-agnostic logic only (zero GTK/GStreamer/OS imports).
+   - `src/hw/`: All Linux/DRM/PCI/sysfs/hwmon/GStreamer hardware isolation and telemetry code.
+   - `src/ui/`: GTK 4.24 / Libadwaita presentation and 0 Hz event-driven idle loop.
+2. **Native Zen 3 Machine Code**:
+   - `.cargo/config.toml` must enforce `-C target-cpu=znver3`.
+   - `Cargo.toml` must enforce `lto = "fat"`, `codegen-units = 1`, `strip = "symbols"`, and `panic = "abort"`.
+   - Optional two-pass PGO is supported via `./build.sh --pgo [VIDEO_OR_DIR]` / `./install.sh --pgo [VIDEO_OR_DIR]` (using `--test-stress` and brief 2s local samples in isolated temp XDG dirs).
+
+---
+
+## 4. Communication Standards
 
 - Be concise and provide direct file links (`file:///...`) to modified files.
 - Summarize changes before requesting approval to commit.

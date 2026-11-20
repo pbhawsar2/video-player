@@ -1,4 +1,4 @@
-use crate::theme::spx;
+use super::theme::spx;
 use gtk4::cairo;
 use gtk4::prelude::*;
 use std::cell::Cell;
@@ -19,14 +19,14 @@ pub fn make_win_ctrl_button<W, F>(
     window: &W,
     scale: f64,
     on_click: F,
-) -> gtk4::DrawingArea
+) -> gtk4::Button
 where
     W: IsA<gtk4::Window>,
     F: Fn() + 'static,
 {
     let da = gtk4::DrawingArea::builder()
-        .content_width(spx(24.0, scale))
-        .content_height(spx(22.0, scale))
+        .content_width(spx(26.0, scale))
+        .content_height(spx(24.0, scale))
         .focusable(false)
         .can_focus(false)
         .build();
@@ -37,8 +37,16 @@ where
         WinCtrlKind::Fullscreen => "Toggle Fullscreen (F)",
         WinCtrlKind::Close => "Close window",
     };
-    da.set_tooltip_text(Some(tooltip));
-    da.set_cursor_from_name(Some("pointer"));
+
+    let btn = gtk4::Button::builder()
+        .has_frame(false)
+        .focusable(false)
+        .can_focus(false)
+        .child(&da)
+        .tooltip_text(tooltip)
+        .build();
+    btn.set_cursor_from_name(Some("pointer"));
+    btn.add_css_class("vp-win-ctrl-btn");
 
     let hovered = Rc::new(Cell::new(false));
     let pressed = Rc::new(Cell::new(false));
@@ -94,34 +102,21 @@ where
             }
         });
     }
-    da.add_controller(motion);
+    btn.add_controller(motion);
 
-    let click = gtk4::GestureClick::new();
-    {
-        let p = Rc::clone(&pressed);
-        let da_weak = da.downgrade();
-        click.connect_pressed(move |_, _, _, _| {
-            p.set(true);
-            if let Some(d) = da_weak.upgrade() {
-                d.queue_draw();
-            }
-        });
-    }
-    {
-        let p = Rc::clone(&pressed);
-        let h = Rc::clone(&hovered);
-        let da_weak = da.downgrade();
-        click.connect_released(move |_, _, _, _| {
-            let was_pressed = p.replace(false);
-            if let Some(d) = da_weak.upgrade() {
-                d.queue_draw();
-            }
-            if was_pressed && h.get() {
-                on_click();
-            }
-        });
-    }
-    da.add_controller(click);
+    let da_weak = da.downgrade();
+    let p = Rc::clone(&pressed);
+    btn.connect_state_flags_changed(move |b, _| {
+        let is_active = b.state_flags().contains(gtk4::StateFlags::ACTIVE);
+        p.set(is_active);
+        if let Some(d) = da_weak.upgrade() {
+            d.queue_draw();
+        }
+    });
+
+    btn.connect_clicked(move |_| {
+        on_click();
+    });
 
     {
         let hovered = Rc::clone(&hovered);
@@ -140,7 +135,7 @@ where
         });
     }
 
-    da
+    btn
 }
 
 fn draw_button(

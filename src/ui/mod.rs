@@ -1,11 +1,15 @@
+pub mod theme;
+pub mod win_controls;
+
 use crate::config::{AppConfig, SPEED_PRESETS, clamp_scale, snap_speed};
+use crate::core::playback::{fmt_time, speed_label};
 use crate::hw_policy::{DisplayTopology, GpuRoute};
 use crate::pipeline::{PlayerEngine, PlayerEvent};
 use crate::telemetry::{
     CpuSampler, PlaybackTelemetry, collect_telemetry, read_battery_info, read_nvidia_rtd3_status,
 };
-use crate::theme::{build_css, spx};
-use crate::win_controls::{WinCtrlKind, make_win_ctrl_button};
+use self::theme::{build_css, spx};
+use self::win_controls::{WinCtrlKind, make_win_ctrl_button};
 use gtk4::gdk;
 use gtk4::gio;
 use gtk4::glib;
@@ -100,14 +104,6 @@ pub fn run_gui(opts: LaunchOptions) -> glib::ExitCode {
     app.run_with_args(&gtk_args)
 }
 
-fn speed_label(rate: f64) -> String {
-    if (rate - rate.round()).abs() < 0.01 {
-        format!("{}x", rate as i32)
-    } else {
-        format!("{rate}x")
-    }
-}
-
 fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
     adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
 
@@ -158,7 +154,7 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
     //   when the user moves the pointer to the top strip (y <= 38px).
     // =========================================================================
     let app_icon = gtk4::Image::from_icon_name(APP_ID);
-    app_icon.set_pixel_size(spx(18.0, current_scale.get()));
+    app_icon.set_pixel_size(spx(20.0, current_scale.get()));
     app_icon.set_valign(gtk4::Align::Center);
 
     let brand_lbl = gtk4::Label::new(Some("Video Player"));
@@ -1180,10 +1176,14 @@ fn build_ui(app: &adw::Application, opts: &LaunchOptions) -> WindowSession {
         let current_scale = Rc::clone(&current_scale);
         let cfg_rc = Rc::clone(&config);
         let css = css.clone();
+        let ic = app_icon.clone();
+        let vs = vol_scale.clone();
         Rc::new(move |next_scale: f64| {
             let clamped = clamp_scale(next_scale);
             current_scale.set(clamped);
             css.load_from_string(&build_css(clamped));
+            ic.set_pixel_size(spx(20.0, clamped));
+            vs.set_width_request(spx(54.0, clamped));
             let mut cfg = cfg_rc.borrow_mut();
             cfg.ui_scale = clamped;
             let _ = cfg.save();
@@ -1603,7 +1603,7 @@ struct UiQaWidgets {
     welcome_open_btn: gtk4::Button,
     welcome_card: gtk4::Box,
     stats_btn: gtk4::Button,
-    close_ctrl: gtk4::DrawingArea,
+    close_ctrl: gtk4::Button,
     bottom_bar: gtk4::Box,
     time_label: gtk4::Label,
     speed_menu_btn: gtk4::MenuButton,
@@ -2104,18 +2104,6 @@ pub fn display_name_for_media(uri: &str) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or("Video")
         .to_string()
-}
-
-fn fmt_time(secs: f64) -> String {
-    let s = secs.max(0.0) as u64;
-    let h = s / 3600;
-    let m = (s % 3600) / 60;
-    let r = s % 60;
-    if h > 0 {
-        format!("{h}:{m:02}:{r:02}")
-    } else {
-        format!("{m:02}:{r:02}")
-    }
 }
 
 pub fn format_hud(t: &PlaybackTelemetry) -> String {

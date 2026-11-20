@@ -20,10 +20,12 @@ pub fn build_css(scale: f64) -> String {
 
     let pad_hdr_v = px(3.0);
     let pad_hdr_h = px(8.0);
-    let pad_card = px(20.0);
-    let hdr_btn_h = px(22.0);
-    let osd_btn_h = px(28.0);
-    let pad_btn_h = px(8.0);
+    let pad_card = px(22.0);
+    let hdr_btn_h = px(24.0);
+    let osd_btn_h = px(30.0);
+    let osd_icon_sz = px(18.0);
+    let pad_btn_h = px(9.0);
+    let px_chip_w = px(104.0);
 
     format!(
         r#"
@@ -39,13 +41,13 @@ window, .root-canvas {{
 }}
 
 .top-header {{
-    background-color: rgba(12, 18, 30, 0.92);
-    border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+    background-color: rgba(12, 18, 30, 0.94);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.11);
     padding: {pad_hdr_v}px {pad_hdr_h}px;
 }}
 
 .top-header.playing-hdr {{
-    background-color: rgba(8, 12, 20, 0.78);
+    background-color: rgba(8, 12, 20, 0.80);
     border-bottom: none;
 }}
 
@@ -131,6 +133,7 @@ button.vp-btn.primary-cta:hover {{
 }}
 
 button.vp-btn.emerald-chip {{
+    min-width: {px_chip_w}px;
     background-color: rgba(52, 211, 153, 0.11);
     color: #34D399;
     border: none;
@@ -144,6 +147,7 @@ button.vp-btn.emerald-chip:hover {{
 }}
 
 button.vp-btn.amber-chip {{
+    min-width: {px_chip_w}px;
     background-color: rgba(251, 191, 36, 0.11);
     color: #FBBF24;
     border: none;
@@ -166,8 +170,9 @@ button.osd-icon-btn {{
     padding: 0;
     border: none;
     border-radius: 7px;
-    background-color: rgba(255, 255, 255, 0.06);
+    background-color: rgba(255, 255, 255, 0.07);
     color: #F1F5F9;
+    -gtk-icon-size: {osd_icon_sz}px;
 }}
 
 button.osd-icon-btn:hover {{
@@ -246,8 +251,28 @@ button.recent-btn:hover {{
 .osd-bar {{
     background-color: rgba(8, 12, 20, 0.90);
     border-radius: 11px;
-    border: 1px solid rgba(148, 163, 184, 0.15);
-    padding: 6px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    padding: 5px 10px;
+}}
+
+button.vp-win-ctrl-btn {{
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+    min-height: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    outline: none;
+}}
+
+button.vp-win-ctrl-btn:hover,
+button.vp-win-ctrl-btn:active,
+button.vp-win-ctrl-btn:focus {{
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    outline: none;
 }}
 
 .hud-pill {{

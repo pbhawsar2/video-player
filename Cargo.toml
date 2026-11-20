@@ -4,6 +4,14 @@ version = "0.2.0"
 edition = "2024"
 description = "Ultra-low-power AMD VA-API DMA-BUF + GNOME Wayland native Video Player"
 
+[lib]
+name = "video_player"
+path = "src/lib.rs"
+
+[[bin]]
+name = "video-player"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 gstreamer = { version = "0.25", features = ["v1_28"] }
