@@ -555,7 +555,7 @@ fn build_and_start_pipeline(
         {
             let on_battery = crate::telemetry::read_battery_info()
                 .1
-                .eq_ignore_ascii_case("Discharging");
+                .contains("Discharging");
             let threads: u32 = if on_battery { 4 } else { 6 };
             if elem.has_property("n-threads") {
                 elem.set_property("n-threads", threads);

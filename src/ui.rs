@@ -2129,7 +2129,7 @@ pub fn format_hud(t: &PlaybackTelemetry) -> String {
          Memory Path   : {} ({})\n\
          Resolution    : {} @ {:.1} fps (rendered: {}, dropped: {})\n\
          NVIDIA RTD3   : {}  |  AMD iGPU: {}\n\
-         App Footprint : {:.1} MiB RSS  |  CPU: {:.1}%\n\
+         App Footprint : {:.1} MiB RSS  |  CPU: {:.1}% ({}T)\n\
          Drive I/O Ops : {} syscalls (1 MiB block)\n\
          Power & Fans  : {}  |  Fan: {} RPM",
         t.decoder_name,
@@ -2145,6 +2145,7 @@ pub fn format_hud(t: &PlaybackTelemetry) -> String {
         t.amd_status,
         t.rss_mib,
         t.cpu_percent,
+        t.cpu_threads,
         t.read_syscalls,
         pwr,
         t.fan_rpm

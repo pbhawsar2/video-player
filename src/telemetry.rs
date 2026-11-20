@@ -23,6 +23,7 @@ pub struct PlaybackTelemetry {
     pub fan_rpm: u32,
     pub rss_mib: f64,
     pub cpu_percent: f64,
+    pub cpu_threads: usize,
     pub read_syscalls: u64,
     pub open_ready_ms: u64,
 }
@@ -34,10 +35,14 @@ pub struct CpuSampler {
     session_start: Option<Instant>,
     last_fps: f64,
     last_cpu: f64,
+    num_cpus: usize,
 }
 
 impl CpuSampler {
     pub fn new() -> Self {
+        let num_cpus = std::thread::available_parallelism()
+            .map(|n| n.get().max(1))
+            .unwrap_or(1);
         Self {
             last_ticks: read_self_cpu_ticks().unwrap_or(0),
             last_rendered: 0,
@@ -45,7 +50,12 @@ impl CpuSampler {
             session_start: None,
             last_fps: 0.0,
             last_cpu: 0.0,
+            num_cpus,
         }
+    }
+
+    pub fn num_cpus(&self) -> usize {
+        self.num_cpus
     }
 
     pub fn sample(&mut self, rendered_frames: u64) -> (f64, f64) {
@@ -81,7 +91,8 @@ impl CpuSampler {
         self.last_ticks = ticks;
         self.last_rendered = rendered_frames;
         self.last_time = now;
-        self.last_cpu = (dticks / 100.0 / elapsed) * 100.0;
+        let raw_pct = (dticks / 100.0 / elapsed) * 100.0;
+        self.last_cpu = (raw_pct / self.num_cpus as f64).clamp(0.0, 100.0);
         let fps = dframes / elapsed;
         if fps > 0.0 {
             self.last_fps = fps;
@@ -221,18 +232,23 @@ fn battery_dir() -> Option<&'static PathBuf> {
 /// reports `amdgpu` APU package power instead of battery charging current.
 pub fn read_battery_info() -> (Option<f64>, String) {
     let Some(bat) = battery_dir() else {
-        return (read_apu_watts(), "AC".into());
+        return (read_apu_watts(), "APU · AC".into());
     };
     let status = read_trimmed(&bat.join("status").to_string_lossy()).unwrap_or_else(|| "AC".into());
     if status.eq_ignore_ascii_case("Discharging") {
         let bat_w = read_trimmed(&bat.join("power_now").to_string_lossy())
             .and_then(|v| v.parse::<f64>().ok())
             .map(|uw| uw / 1_000_000.0)
-            .filter(|&w| w > 0.5)
-            .or_else(read_apu_watts);
-        (bat_w, "Discharging".into())
+            .filter(|&w| w > 0.5);
+        let apu_w = read_apu_watts();
+        match (bat_w, apu_w) {
+            (Some(bw), Some(aw)) => (Some(bw), format!("sys · {aw:.1} W APU · Discharging")),
+            (Some(bw), None) => (Some(bw), "sys · Discharging".into()),
+            (None, Some(aw)) => (Some(aw), "APU · Discharging".into()),
+            (None, None) => (None, "Discharging".into()),
+        }
     } else {
-        (read_apu_watts(), format!("AC · {status}"))
+        (read_apu_watts(), format!("APU · AC {status}"))
     }
 }
 
@@ -315,6 +331,7 @@ pub fn collect_telemetry(engine: &PlayerEngine, cpu_sampler: &mut CpuSampler) ->
 
     let (cpu_pct, measured_fps) = cpu_sampler.sample(t.rendered_frames);
     t.cpu_percent = cpu_pct;
+    t.cpu_threads = cpu_sampler.num_cpus();
     if t.fps_avg < 1.0 && measured_fps > 0.0 {
         t.fps_avg = measured_fps;
     }
