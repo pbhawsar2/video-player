@@ -71,6 +71,9 @@ impl PlayerEngine {
             .name("vp_vsink")
             .property("sync", true)
             .property("enable-last-sample", false)
+            // Default 5ms is shorter than a single 60Hz/144Hz frame and causes spurious drops on
+            // minor Wayland compositor jitter; 20ms matches standard GstVideoSink lateness budget.
+            .property("max-lateness", 20_000_000i64)
             .build()
             .map_err(|e| format!("Failed to create gtk4paintablesink: {e}"))?;
 
@@ -543,6 +546,26 @@ fn build_and_start_pipeline(
     let pipe = gst::Pipeline::new();
     let is_local = uri.starts_with("file://");
 
+    // Throttle software AV1 decoder (`dav1ddec`) before it enters PAUSED/PLAYING so it doesn't
+    // spawn all 16 logical threads or buffer 16 frames (reduces CPU boost spikes & fan spin on AV1).
+    pipe.connect_deep_element_added(|_bin, _sub_bin, elem| {
+        if elem
+            .factory()
+            .is_some_and(|f| f.name().as_str() == "dav1ddec")
+        {
+            let on_battery = crate::telemetry::read_battery_info()
+                .1
+                .eq_ignore_ascii_case("Discharging");
+            let threads: u32 = if on_battery { 4 } else { 6 };
+            if elem.has_property("n-threads") {
+                elem.set_property("n-threads", threads);
+            }
+            if elem.has_property("max-frame-delay") {
+                elem.set_property("max-frame-delay", 2i64);
+            }
+        }
+    });
+
     let vqueue = gst::ElementFactory::make("queue")
         .name("vqueue")
         .property("max-size-buffers", 3u32)
@@ -688,6 +711,19 @@ fn attach_audio_branch(pipe: &gst::Pipeline, src_pad: &gst::Pad, shared: &Worker
     };
     if asink.has_property("enable-last-sample") {
         asink.set_property("enable-last-sample", false);
+    }
+    if asink.has_property("client-name") {
+        asink.set_property("client-name", "Video Player");
+    }
+    // Hint PipeWire/WirePlumber that this is Movie playback so it selects power-saving audio quantums
+    // (~21ms instead of 2.6ms low-latency IRQ wakeups).
+    if asink.has_property("stream-properties") {
+        let props = gst::Structure::builder("props")
+            .field("media.type", "Audio")
+            .field("media.category", "Playback")
+            .field("media.role", "Movie")
+            .build();
+        asink.set_property("stream-properties", props);
     }
 
     let mut elems: Vec<&gst::Element> = vec![&aqueue, &aconv];
